@@ -1,0 +1,5 @@
+certifi==2019.9.11
+decorator==4.4.1
+networkx==2.4
+nltk==3.4.5
+six==1.12.0
