@@ -65,32 +65,46 @@ def filter_non_wordnet(graph: DiGraph) -> DiGraph:
     return new_graph
 
 
-def generate_khop(graph: DiGraph, *, k=2, number_of_samples=10) -> List[List[tuple]]:
-    paths = []
-    # Find new k-hop paths until we had enough
-    while len(paths) < number_of_samples:
-        root = r.sample(graph.nodes, 1)[0]
-        # for each node, get their first neighbor, and recursively form a path
-        node = root
-        path = []
-        for i in range(k):
-            neighbors = [n for n in graph.neighbors(node) if graph.get_edge_data(node, n)['weight'] != -1]
-            if neighbors:
-                next_node = neighbors[0]
-                path.append((node, next_node, graph.get_edge_data(node, next_node)))
-                node = next_node
+def dfs_helper(graph, from_node, visited, depth, k):
+    visited[from_node] = True
+    if depth == k:
+        return [from_node]
+    neighbors = list(graph.neighbors(from_node))
+    r.shuffle(neighbors)
+    for next_node in neighbors:
+        if not visited[next_node]:
+            recursion_result = dfs_helper(graph, next_node, visited, depth+1, k)
+            if len(recursion_result) == 1 and not isinstance(recursion_result[0], tuple):
+                return [(from_node, graph.get_edge_data(from_node, next_node)['label'], next_node)]
             else:
-                break
-        if len(path) == k:
-            paths.append(path)
+                return [(from_node, graph.get_edge_data(from_node, next_node)['label'], next_node)] + recursion_result
+    return [from_node]
 
-    with open('datasets/khops_k='+str(k)+'_samples='+str(number_of_samples)+'.txt', 'w') as outfile:
-        for path in paths:
-            string = '; '.join([x+' '+data['label']+' '+y for x, y, data in path])
-            print(string, file=outfile)
+
+def generate_khop(graph: DiGraph, *, k=2, number_of_samples=10) -> List[List[tuple]]:
+    print('Generating k-hops...')
+    paths = []
+    nodes_to_sample = copy(graph.nodes)
+    # Find new k-hop paths until we had enough or no more root nodes
+    while len(paths) < number_of_samples and len(graph.nodes) > 0:
+        if number_of_samples > len(nodes_to_sample):
+            samples = nodes_to_sample
+        else:
+            samples = r.sample(nodes_to_sample, number_of_samples)
+        for root in samples:
+            # for each node, get their first neighbor, and recursively form a path
+            visited = {node: False for node in graph.nodes}
+            path = dfs_helper(graph, root, visited, depth=0, k=k)
+            if len(path) == k:
+                paths.append(path)
+        nodes_to_sample = [node for node in nodes_to_sample if node not in samples]
+
+    paths = paths[:min(number_of_samples, len(paths))]
+    return paths
 
 
 def filter_non_commonsense(graph: DiGraph, commonsense_relations: List[str]) -> DiGraph:
+    print('Filtering commonsense relations...')
     # Remove edges that are not listed as commonsense
     edges_to_remove = []
     for x, y in graph.edges:
@@ -105,7 +119,7 @@ def filter_non_commonsense(graph: DiGraph, commonsense_relations: List[str]) -> 
     return new_graph
 
 
-def generate_datasets(relation_data, n_samples=100000):
+def generate_cs_datasets(relation_data, n_samples=100000):
     person_data, physical_data, all_data = [], [], []
     for relation, x_category, x, y_category, y in relation_data:
         # convert data to string data point
@@ -143,11 +157,36 @@ def generate_datasets(relation_data, n_samples=100000):
                 print(data_point, file=outf)
 
 
+def generate_dataset_from_tuple_lists(file_name, tuple_lists):
+    list_as_strings = []
+    for list_of_tuples in tuple_lists:
+        words = []
+        for x, r, y in list_of_tuples:
+            words += ['and', x, relation_to_string[r], y]
+        list_as_strings.append(' '.join(words[1:]))
+
+    with open('datasets/' + file_name + '.txt', 'w') as outf:
+        for sentence in list_as_strings:
+            print(sentence, file=outf)
+
+
+def generate_all_cs_dataset(filtered_graph: DiGraph):
+    relations = []
+    for node in filtered_graph.nodes():
+        for neighbor in filtered_graph.neighbors(node):
+            relation = filtered_graph.get_edge_data(node, neighbor)['label']
+            rs = ''.join(c if c.islower() else ' ' + c for c in relation).lower()[1:]
+            relations.append(node + ' ' + rs + ' ' + neighbor)
+    with open('datasets/all_cs_217k.txt', 'w') as outfile:
+        for relation in relations:
+            print(relation, file=outfile)
+
+
 if __name__ == '__main__':
     r.seed(0)
     file_path = 'datasets/relations-with-categories.txt'
     pickle_file_path = 'datasets/conceptnet_digraph.pickle'
-    # conceptnet = load_graph_file(file_path, pickle_file_path)
+    conceptnet = load_graph_file(file_path, pickle_file_path)
 
     # Filter out non wordnet nodes
     # wn_conceptnet = filter_non_wordnet(conceptnet)
@@ -155,18 +194,23 @@ if __name__ == '__main__':
     # print(len(wn_conceptnet.edges))
 
     # Filter out non commonsense edges
-    # filtered_graph = filter_non_commonsense(conceptnet, commonsense_relations)
+    filtered_graph = filter_non_commonsense(conceptnet, commonsense_relations)
+
+    # Generate K-hop dataset
     # k = 2
     # n_samples=100
     # khops = generate_khop(filtered_graph, k=k, number_of_samples=n_samples)
+    # generate_dataset_from_tuple_lists('khops_k='+str(k)+'_n='+str(n_samples), khops)
 
-    # Generate dataset for testing
-    commonsense_relation_data = []
-    with open(file_path, 'r') as infile:
-        for line in infile:
-            tokens = line.strip().split(', ')
-            if tokens[0] in commonsense_relations:
-                commonsense_relation_data.append(tokens)
+    # Generate 100k CS datasets for testing
+    # commonsense_relation_data = []
+    # with open(file_path, 'r') as infile:
+    #     for line in infile:
+    #         tokens = line.strip().split(', ')
+    #         if tokens[0] in commonsense_relations:
+    #             commonsense_relation_data.append(tokens)
+    #
+    # generate_cs_datasets(commonsense_relation_data)
 
-    generate_datasets(commonsense_relation_data)
+    generate_all_cs_dataset(filtered_graph)
 
