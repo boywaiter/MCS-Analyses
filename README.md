@@ -5,7 +5,7 @@ to install required packages. Make sure to download the original Conceptnet csv 
 ## Scripts: 
 To filter out english relations in Conceptnet in a readable form:
 
-`python categorize_conceptnet.py`   
+`python filter_english.py`   
 
 Add categories to Conceptnet data using Wordnet (e.g "physical"):
 
@@ -13,7 +13,7 @@ Add categories to Conceptnet data using Wordnet (e.g "physical"):
 
 Calculate statistics for relations in Conceptnet:
  
-`python categorize_conceptnet.py`   
+`python relation_metrics.py`   
  
 Generate LM fine-tuning datasets from the categorized Conceptnet data:
  
