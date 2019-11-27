@@ -1,5 +1,6 @@
+import collections
 import os
-from collections import defaultdict
+from collections import defaultdict, Counter
 from copy import copy
 from typing import List
 
@@ -7,14 +8,18 @@ from networkx import DiGraph, isolates
 import pickle
 import random as r
 from nltk.corpus import wordnet
+
 wn_lemmas = set(wordnet.all_lemma_names())
 
+# commonsense_relations = ['UsedFor', 'AtLocation', 'HasSubevent', 'HasPrerequisite', 'CapableOf', 'Causes', 'PartOf',
+#                          'MannerOf', 'MotivatedByGoal', 'HasProperty', 'ReceivesAction', 'HasA', 'CausesDesire',
+#                          'HasFirstSubevent', 'Desires', 'NotDesires', 'HasLastSubevent', 'MadeOf', 'NotCapableOf',
+#                          'CreatedBy', 'LocatedNear']
 commonsense_relations = ['UsedFor', 'AtLocation', 'HasSubevent', 'HasPrerequisite', 'CapableOf', 'Causes', 'PartOf',
                          'MannerOf', 'MotivatedByGoal', 'HasProperty', 'ReceivesAction', 'HasA', 'CausesDesire',
-                         'HasFirstSubevent', 'Desires', 'NotDesires', 'HasLastSubevent', 'MadeOf', 'NotCapableOf',
-                         'CreatedBy', 'LocatedNear']
+                         'HasFirstSubevent', 'Desires', 'HasLastSubevent', 'MadeOf', 'LocatedNear']
 
-relation_to_string = {rel: ''.join(c if c.islower() else ' '+c for c in rel).lower()[1:]
+relation_to_string = {rel: ''.join(c if c.islower() else ' ' + c for c in rel).lower()[1:]
                       for rel in commonsense_relations}
 
 
@@ -73,7 +78,7 @@ def dfs_helper(graph, from_node, visited, depth, k):
     r.shuffle(neighbors)
     for next_node in neighbors:
         if not visited[next_node]:
-            recursion_result = dfs_helper(graph, next_node, visited, depth+1, k)
+            recursion_result = dfs_helper(graph, next_node, visited, depth + 1, k)
             if len(recursion_result) == 1 and not isinstance(recursion_result[0], tuple):
                 return [(from_node, graph.get_edge_data(from_node, next_node)['label'], next_node)]
             else:
@@ -110,7 +115,7 @@ def filter_non_commonsense(graph: DiGraph, commonsense_relations: List[str]) -> 
     for x, y in graph.edges:
         data = graph.get_edge_data(x, y)
         if data['label'] not in commonsense_relations or data['weight'] == -1:
-            edges_to_remove.append((x,y))
+            edges_to_remove.append((x, y))
     new_graph = copy(graph)
     new_graph.remove_edges_from(edges_to_remove)
     # Remove possible leftover island nodes
@@ -142,17 +147,17 @@ def generate_cs_datasets(relation_data, n_samples=100000):
     if len(physical_data) > n_samples:
         physical_data = r.sample(physical_data, n_samples)
     else:
-        physical_data.extend(r.sample(all_data, n_samples-len(physical_data)))
+        physical_data.extend(r.sample(all_data, n_samples - len(physical_data)))
     if len(person_data) > n_samples:
         person_data = r.sample(person_data, n_samples)
     else:
-        person_data.extend(r.sample(all_data, n_samples-len(person_data)))
+        person_data.extend(r.sample(all_data, n_samples - len(person_data)))
 
-    pairs = [('random-cs-n'+str(n_samples), all_data),
-             ('physical-cs-n'+str(n_samples), physical_data),
-             ('person-cs-n'+str(n_samples), person_data)]
+    pairs = [('random-cs-n' + str(n_samples), all_data),
+             ('physical-cs-n' + str(n_samples), physical_data),
+             ('person-cs-n' + str(n_samples), person_data)]
     for name, data in pairs:
-        with open('datasets/'+name+'.txt', 'w') as outf:
+        with open('datasets/' + name + '.txt', 'w') as outf:
             for data_point in data:
                 print(data_point, file=outf)
 
@@ -182,10 +187,46 @@ def generate_all_cs_dataset(filtered_graph: DiGraph):
             print(relation, file=outfile)
 
 
+def generate_multiple_choice_dataset(choice_matrix_path: str, filtered_graph: DiGraph, n_choices=7):
+    incorrect_choices_dict = {}
+    with open(choice_matrix_path, 'r') as matrix_file:
+        for line in matrix_file.readlines()[1:]:
+            tokens = line.split(',')
+            incorrect_choices_dict[tokens[0]] = [token for token in tokens[1:] if token != '' and token != '\n' and
+                                                 token in commonsense_relations]
+    question_tuples = []
+    id_number = 0
+    counter = collections.Counter()
+    for e1 in filtered_graph.nodes():
+        for e2 in filtered_graph.neighbors(e1):
+            counter.update([(e1,e2)])
+            correct_relation = filtered_graph.get_edge_data(e1, e2)['label']
+            incorrect_relations = incorrect_choices_dict[correct_relation]
+            question_tuples.append((id_number, e1, e2, correct_relation, incorrect_relations))
+            id_number += 1
+    if max(counter.values()) > 1:
+        raise RuntimeError('Some pair of entities appear more than once.')
+    r.shuffle(question_tuples)
+
+    with open('datasets/cn-all-cs-multiple-choice-data.jsonl', 'w') as data_file:
+        with open('datasets/cn-all-cs-multiple-choice-labels.lst', 'w') as labels_file:
+            for id_number, e1, e2, correct_relation, incorrect_relations in question_tuples:
+                final_choices: List = r.sample(incorrect_relations, n_choices - 1) + [correct_relation]
+                r.shuffle(final_choices)
+                correct_index = final_choices.index(correct_relation)
+                choice_strings = ['\"sol' + str(i + 1) + '\": \"' + relation_to_string[final_choices[i]] + '\"' for i in
+                                  range(n_choices)]
+                line_to_print = '{\"id\": \"' + str(id_number) + '\", \"e1\": \"' + e1.replace('_',' ') + \
+                                '\", \"e2\": \"' + e2.replace('_',' ') + '\", ' + ', '.join(choice_strings) +'}'
+                print(line_to_print, file=data_file)
+                print(str(correct_index), file=labels_file)
+
+
 if __name__ == '__main__':
     r.seed(0)
     file_path = 'datasets/relations-with-categories.txt'
     pickle_file_path = 'datasets/conceptnet_digraph.pickle'
+    choice_matrix_path = 'datasets/CN-Relation-ClassificationMatrix.csv'
     conceptnet = load_graph_file(file_path, pickle_file_path)
 
     # Filter out non wordnet nodes
@@ -212,5 +253,4 @@ if __name__ == '__main__':
     #
     # generate_cs_datasets(commonsense_relation_data)
 
-    generate_all_cs_dataset(filtered_graph)
-
+    generate_multiple_choice_dataset(choice_matrix_path, filtered_graph)
