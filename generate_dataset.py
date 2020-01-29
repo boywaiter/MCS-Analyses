@@ -4,7 +4,7 @@ from collections import defaultdict, Counter
 from copy import copy
 from typing import List
 
-from networkx import DiGraph, isolates
+from networkx import DiGraph, isolates, subgraph
 import pickle
 import random as r
 from nltk.corpus import wordnet
@@ -124,6 +124,17 @@ def filter_non_commonsense(graph: DiGraph, commonsense_relations: List[str]) -> 
     return new_graph
 
 
+def filter_non_physical(graph: DiGraph, relation_data) -> DiGraph:
+    physical_nodes = set([])
+    for relation, x_category, x, y_category, y in relation_data:
+        # create each data set category, random, person data, physical data
+        if x_category == 'PHYS' or x_category == 'PER':
+            physical_nodes.add(x)
+        if y_category == 'PHYS' or y_category == 'PER':
+            physical_nodes.add(y)
+    return subgraph(graph, physical_nodes)
+
+
 def generate_cs_datasets(relation_data, n_samples=100000):
     person_data, physical_data, all_data = [], [], []
     for relation, x_category, x, y_category, y in relation_data:
@@ -187,7 +198,7 @@ def generate_all_cs_dataset(filtered_graph: DiGraph):
             print(relation, file=outfile)
 
 
-def generate_multiple_choice_dataset(choice_matrix_path: str, filtered_graph: DiGraph, n_choices=7):
+def generate_multiple_choice_dataset(choice_matrix_path: str, filtered_graph: DiGraph, n_choices=7, name=''):
     incorrect_choices_dict = {}
     with open(choice_matrix_path, 'r') as matrix_file:
         for line in matrix_file.readlines()[1:]:
@@ -208,8 +219,8 @@ def generate_multiple_choice_dataset(choice_matrix_path: str, filtered_graph: Di
         raise RuntimeError('Some pair of entities appear more than once.')
     r.shuffle(question_tuples)
 
-    with open('datasets/cn-all-cs-multiple-choice-data.jsonl', 'w') as data_file:
-        with open('datasets/cn-all-cs-multiple-choice-labels.lst', 'w') as labels_file:
+    with open(name+'-data.jsonl', 'w') as data_file:
+        with open(name+'-labels.lst', 'w') as labels_file:
             for id_number, e1, e2, correct_relation, incorrect_relations in question_tuples:
                 final_choices: List = r.sample(incorrect_relations, n_choices - 1) + [correct_relation]
                 r.shuffle(final_choices)
@@ -244,13 +255,16 @@ if __name__ == '__main__':
     # generate_dataset_from_tuple_lists('khops_k='+str(k)+'_n='+str(n_samples), khops)
 
     # Generate 100k CS datasets for testing
-    # commonsense_relation_data = []
-    # with open(file_path, 'r') as infile:
-    #     for line in infile:
-    #         tokens = line.strip().split(', ')
-    #         if tokens[0] in commonsense_relations:
-    #             commonsense_relation_data.append(tokens)
+    commonsense_relation_data = []
+    with open(file_path, 'r') as infile:
+        for line in infile:
+            tokens = line.strip().split(', ')
+            if tokens[0] in commonsense_relations:
+                commonsense_relation_data.append(tokens)
     #
     # generate_cs_datasets(commonsense_relation_data)
 
-    generate_multiple_choice_dataset(choice_matrix_path, filtered_graph)
+    physical_cs_graph = filter_non_physical(filtered_graph, commonsense_relation_data)
+    print(len(physical_cs_graph.nodes))
+    generate_multiple_choice_dataset(choice_matrix_path, physical_cs_graph,
+                                     name='datasets/cn-phsyical-narrow-multiple-choice')
